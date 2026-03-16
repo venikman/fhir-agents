@@ -1,0 +1,73 @@
+@baseUrl = http://localhost:3000
+
+###
+# @name routesToLookup
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "What insurance does patient-0001 have?"
+}
+
+?? status == 200
+?? body agentUsed == lookup
+
+###
+# @name routesToSearch
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "Find female patients over 60"
+}
+
+?? status == 200
+?? body agentUsed == search
+
+###
+# @name routesToAnalytics
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "How many practitioners per organization?"
+}
+
+?? status == 200
+?? body agentUsed == analytics
+
+###
+# @name routesToClinical
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "Full clinical summary for patient-0001"
+}
+
+?? status == 200
+?? body agentUsed == clinical
+
+###
+# @name routesToCohort
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "Patients on metformin without a diabetes diagnosis"
+}
+
+?? status == 200
+?? body agentUsed == cohort
+
+###
+# @name routesToExport
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "Export all data for the ACO"
+}
+
+?? status == 200
+?? body agentUsed == export

@@ -1,0 +1,25 @@
+{
+  "name": "g-fpf",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "httpyac": "^6.16.7"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.4.1",
+    "@langchain/core": "^1.1.32",
+    "@langchain/google-genai": "^2.1.25",
+    "@langchain/langgraph": "^1.2.2",
+    "@langchain/langgraph-checkpoint": "^1.0.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.6.0",
+    "elysia": "^1.4.27",
+    "openlit": "^1.10.0",
+    "zod": "^4.3.6"
+  }
+}

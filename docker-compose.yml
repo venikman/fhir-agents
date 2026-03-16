@@ -1,0 +1,44 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12-alpine
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: OPENLIT
+      CLICKHOUSE_DATABASE: openlit
+      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
+    ports:
+      - "8123:8123"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./assets/clickhouse-config.xml:/etc/clickhouse-server/config.d/custom-config.xml:ro
+      - ./assets/clickhouse-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user=default --password=OPENLIT --query='SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  openlit:
+    image: ghcr.io/openlit/openlit:latest
+    ports:
+      - "3001:3000"   # OpenLIT UI
+      - "4318:4318"   # OTLP HTTP receiver
+    environment:
+      INIT_DB_HOST: clickhouse
+      INIT_DB_PORT: 8123
+      INIT_DB_DATABASE: openlit
+      INIT_DB_USERNAME: default
+      INIT_DB_PASSWORD: OPENLIT
+      SQLITE_DATABASE_URL: file:/app/client/data/data.db
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - openlit-data:/app/client/data
+      - ./assets/otel-collector-config.yaml:/etc/otel/otel-collector-config.yaml
+      - ./assets/supervisor-dynamic.yaml:/etc/otel/supervisor-dynamic.yaml
+
+volumes:
+  clickhouse-data:
+  openlit-data:

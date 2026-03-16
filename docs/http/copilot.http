@@ -1,0 +1,64 @@
+@baseUrl = http://localhost:3000
+
+###
+# @name health
+GET {{baseUrl}}/health
+
+?? status == 200
+?? body status == ok
+
+###
+# @name syncQuery
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "Which attribution lists exist?"
+}
+
+?? status == 200
+?? body answer isString
+?? body agentUsed isString
+?? body confidence matches ^(high|medium|low)$
+?? body citations isArray
+?? body reasoning isArray
+?? body toolsUsed isArray
+
+###
+# @name validationMissingQuery
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{}
+
+?? status >= 400
+
+###
+# @name multiTurn1
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "Find patient James Smith",
+  "threadId": "http-multi-turn"
+}
+
+?? status == 200
+?? body answer isString
+?? js response.parsedBody.answer.length > 0
+?? js response.parsedBody.toolsUsed.length > 0
+
+###
+# @name multiTurn2
+POST {{baseUrl}}/api/copilot
+Content-Type: application/json
+
+{
+  "query": "What conditions does this patient have?",
+  "threadId": "http-multi-turn"
+}
+
+?? status == 200
+?? body answer isString
+?? js response.parsedBody.answer.length > 0
+?? js response.parsedBody.toolsUsed.length > 0
