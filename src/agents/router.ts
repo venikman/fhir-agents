@@ -1,14 +1,11 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
 import type { Callbacks } from "@langchain/core/callbacks/manager"
 import { SystemMessage, HumanMessage } from "@langchain/core/messages"
 import { SpanStatusCode } from "@opentelemetry/api"
 import { getTelemetryException, setContentAttribute, tracer } from "../otel.ts"
+import { createGeminiFallbackModel } from "../llm.ts"
 import type { AgentType } from "./definitions.ts"
 
-const routerModel = new ChatGoogleGenerativeAI({
-  model: "gemini-3.1-flash-lite-preview",
-  apiKey: process.env.GOOGLE_API_KEY,
-})
+const routerModel = createGeminiFallbackModel()
 
 const VALID_TYPES: AgentType[] = ["lookup", "search", "analytics", "clinical", "cohort", "export"]
 

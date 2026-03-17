@@ -20,8 +20,9 @@ Provider Copilot — a headless, multi-agent system for healthcare organizations
 
 **Google Gemini via Generative Language API only.** GCloud project: `audio-sharp-interop`.
 
-- **Primary model:** `gemini-3.1-flash-lite-preview`
-- **Forbidden:** No 2.x models, no 3.0 models, no pro-tier models. Only Gemini 3.1 non-pro models.
+- **Primary model:** `gemini-3-flash-preview`
+- **Fallback model:** `gemini-3.1-flash-lite-preview`
+- **Forbidden:** No 2.x models and no pro-tier models. Only Gemini 3-series non-pro models (`gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview`).
 - **No other providers.** Do not use OpenAI, Anthropic API, or other LLM providers in code.
 - Use `@langchain/google-genai` package (not `@langchain/google-vertexai`)
 - Auth via API key: `GOOGLE_API_KEY` in `.env`

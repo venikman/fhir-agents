@@ -26,3 +26,4 @@ Architectural decisions and their reasoning. Updated as the project evolves.
 | 2026-03-16 | Observability backend | Self-hosted Langfuse | Grafana Cloud / LangSmith | Single AI observability system across environments, self-hostable, and better aligned with prompt/eval workflows |
 | 2026-03-16 | Trace content policy | Redact by default (`LANGFUSE_CAPTURE_CONTENT=false`) | Capture prompts and tool payloads by default | Healthcare traces may contain PHI; content capture must be explicit and environment-scoped |
 | 2026-03-16 | Deployment platform | Railway | Fly.io / Cloudflare Workers | Native Bun support, Elysia templates, `bun:sqlite` works on persistent volume, simpler deploy, more reliable |
+| 2026-03-17 | Gemini model policy | `gemini-3-flash-preview` primary with `gemini-3.1-flash-lite-preview` fallback | Lite-only default | Flash is now the preferred default model, but Lite remains the lowest-cost fallback when the primary invocation fails |

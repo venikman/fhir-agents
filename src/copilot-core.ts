@@ -7,7 +7,6 @@ import {
   tracer,
 } from "./otel.ts"
 import { SpanStatusCode } from "@opentelemetry/api"
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
 import { createReactAgent } from "@langchain/langgraph/prebuilt"
 import { HumanMessage } from "@langchain/core/messages"
 import { agentDefinitions, type AgentType } from "./agents/definitions.ts"
@@ -15,13 +14,11 @@ import { classifyIntent } from "./agents/router.ts"
 import { extractResponse, type AgentResponse } from "./explainability.ts"
 import { BunSqliteSaver } from "./checkpointer.ts"
 import type { BaseMessage } from "@langchain/core/messages"
+import { createGeminiFallbackModel, createGeminiToolFallbackModel } from "./llm.ts"
 
 // ── Shared instances ────────────────────────────────────────────────
 
-export const model = new ChatGoogleGenerativeAI({
-  model: "gemini-3.1-flash-lite-preview",
-  apiKey: process.env.GOOGLE_API_KEY,
-})
+export const model = createGeminiFallbackModel()
 
 export const checkpointer = new BunSqliteSaver("./data/checkpoints.sqlite")
 
@@ -31,8 +28,9 @@ const agentCache = new Map<AgentType, ReturnType<typeof createReactAgent>>()
 export function getAgent(agentType: AgentType) {
   if (agentCache.has(agentType)) return agentCache.get(agentType)!
   const def = agentDefinitions[agentType]
+  const llm = createGeminiToolFallbackModel(def.tools)
   const agent = createReactAgent({
-    llm: model,
+    llm: () => llm,
     tools: def.tools,
     prompt: def.prompt,
     checkpointer,
