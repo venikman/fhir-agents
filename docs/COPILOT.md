@@ -176,32 +176,33 @@ ws.onopen = () => {
 - HTTP server (Elysia) with sync + WebSocket streaming
 - Persistent memory (`BunSqliteSaver` backed by `bun:sqlite`, WAL mode)
 - 6 agents, router, 12 tools, explainability — complete and tested
-- OTel tracing via OpenLIT SDK auto-instrumentation + manual spans for router, FHIR HTTP, explainability
+- OTel tracing via Langfuse span export + LangChain callback tracing, with manual spans for router, FHIR HTTP, explainability
 - Dockerfile for Railway deployment (`bun:sqlite` on persistent volume)
 
 ### Observability
 
-OpenLIT auto-instruments all LangChain calls. Manual spans cover custom orchestration:
+Langfuse traces all LangChain calls through the Langfuse callback handler. Manual spans cover custom orchestration:
 
 ```
 copilot.query (root)
   ├── router.classify_intent
-  ├── agent.stream (auto-instrumented by OpenLIT)
-  │   ├── llm.call (auto)
-  │   ├── tool.fhir_search_patients (auto)
+  ├── agent.stream (LangChain callback traced)
+  │   ├── llm.call
+  │   ├── tool.fhir_search_patients
   │   │   └── fhir.http (manual)
-  │   └── llm.call (auto)
+  │   └── llm.call
   └── explainability.extract
 ```
 
-**Local:** `docker compose up -d` → OpenLIT UI at `http://localhost:3001`
-**Deploy:** Set `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_EXPORTER_OTLP_HEADERS` for Grafana Cloud
+Set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` to enable tracing.
+Keep `LANGFUSE_CAPTURE_CONTENT=false` unless the environment is approved for prompt and tool payload capture.
+See [OBSERVABILITY.md](OBSERVABILITY.md) for the deployment topology and rollout notes.
 
 ### Deployment (Railway)
 
 1. Connect GitHub repo → Railway auto-deploys on push
 2. Add persistent volume mounted at `/app/data` for SQLite checkpoints
-3. Set environment variables: `GOOGLE_API_KEY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`
+3. Set environment variables: `GOOGLE_API_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
 
 ### What's needed for production
 

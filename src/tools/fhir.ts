@@ -1,21 +1,25 @@
 import { tool } from "@langchain/core/tools"
 import { SpanStatusCode } from "@opentelemetry/api"
-import { tracer } from "../otel.ts"
+import { getTelemetryException, setContentAttribute, tracer } from "../otel.ts"
 import { z } from "zod"
 
-const BASE_URL = "https://bulk-atr.nedbailov375426.workers.dev"
+const BASE_URL = process.env.FHIR_BASE_URL ?? "https://bulk-atr.nedbailov375426.workers.dev"
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-export async function fhirGet(path: string, accept = "application/fhir+json") {
+export async function fhirGet<T = any>(
+  path: string,
+  accept = "application/fhir+json",
+): Promise<T> {
   return tracer.startActiveSpan("fhir.http", async (span) => {
     const url = `${BASE_URL}${path}`
     span.setAttribute("http.method", "GET")
-    span.setAttribute("http.url", url)
+    setContentAttribute(span, "http.url", url)
 
     // Extract resource type from path (e.g. /fhir/Patient/123 → Patient)
     const resourceMatch = path.match(/\/fhir\/(\w+)/)
-    if (resourceMatch) span.setAttribute("fhir.resource_type", resourceMatch[1])
+    const resourceType = resourceMatch?.[1]
+    if (resourceType) span.setAttribute("fhir.resource_type", resourceType)
 
     try {
       const res = await fetch(url, {
@@ -30,10 +34,11 @@ export async function fhirGet(path: string, accept = "application/fhir+json") {
       }
 
       span.setStatus({ code: SpanStatusCode.OK })
-      return res.json()
+      return (await res.json()) as T
     } catch (err) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) })
-      span.recordException(err instanceof Error ? err : new Error(String(err)))
+      const traceError = getTelemetryException(err)
+      span.setStatus({ code: SpanStatusCode.ERROR, message: traceError.message })
+      span.recordException(traceError)
       throw err
     } finally {
       span.end()
@@ -124,7 +129,7 @@ export const bulkExportTool = tool(
 
     const kickRes = await tracer.startActiveSpan("fhir.http", async (span) => {
       span.setAttribute("http.method", "GET")
-      span.setAttribute("http.url", kickUrl)
+      setContentAttribute(span, "http.url", kickUrl)
       span.setAttribute("fhir.resource_type", "Group")
 
       try {
@@ -135,8 +140,9 @@ export const bulkExportTool = tool(
         span.setStatus({ code: SpanStatusCode.OK })
         return res
       } catch (err) {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) })
-        span.recordException(err instanceof Error ? err : new Error(String(err)))
+        const traceError = getTelemetryException(err)
+        span.setStatus({ code: SpanStatusCode.ERROR, message: traceError.message })
+        span.recordException(traceError)
         throw err
       } finally {
         span.end()
@@ -159,18 +165,21 @@ export const bulkExportTool = tool(
       })
 
       if (pollRes.status === 200) {
-        const manifest = await pollRes.json()
+        const manifest = (await pollRes.json()) as {
+          output?: Array<{ type?: string; url: string }>
+        }
 
         // 3 — Download all NDJSON and build summary
         const lines: string[] = [`Export complete (${attempts} polls). Files:`]
+        const outputs = manifest.output ?? []
 
-        for (const entry of manifest.output) {
+        for (const entry of outputs) {
           const fileRes = await fetch(entry.url, {
             headers: { Accept: "application/fhir+ndjson" },
           })
           const ndjson = await fileRes.text()
           const resources = ndjson.trim().split("\n")
-          lines.push(`  ${entry.type}: ${resources.length} resource(s)`)
+          lines.push(`  ${entry.type ?? "unknown"}: ${resources.length} resource(s)`)
 
           // Include first 2 resources as sample for each type
           for (const line of resources.slice(0, 2)) {

@@ -264,7 +264,9 @@ export class BunSqliteSaver extends BaseCheckpointSaver {
     )
 
     for (let i = 0; i < writes.length; i++) {
-      const [channel, value] = writes[i]
+      const write = writes[i]
+      if (!write) continue
+      const [channel, value] = write
       const writeIdx = WRITES_IDX_MAP[channel as string] ?? i
       const [type, data] = await this.serde.dumpsTyped(value)
       stmt.run(

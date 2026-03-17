@@ -1,5 +1,5 @@
 import { SpanStatusCode } from "@opentelemetry/api"
-import { tracer } from "./otel.ts"
+import { getTelemetryException, tracer } from "./otel.ts"
 import type { BaseMessage } from "@langchain/core/messages"
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -35,12 +35,15 @@ function extractCitations(messages: BaseMessage[]): Citation[] {
     if (!text) continue
 
     for (const match of text.matchAll(FHIR_REF_PATTERN)) {
-      const reference = `${match[1]}/${match[2]}`
+      const resourceType = match[1]
+      const resourceId = match[2]
+      if (!resourceType || !resourceId) continue
+      const reference = `${resourceType}/${resourceId}`
       if (seen.has(reference)) continue
       seen.add(reference)
       citations.push({
-        resourceType: match[1],
-        resourceId: match[2],
+        resourceType,
+        resourceId,
         reference,
       })
     }
@@ -73,7 +76,7 @@ function extractReasoning(messages: BaseMessage[]): string[] {
     if (type === "tool") {
       const name = (msg as any).name ?? "unknown_tool"
       const content = typeof msg.content === "string" ? msg.content : ""
-      const brief = content.split("\n")[0].slice(0, 120)
+      const brief = content.split("\n")[0]?.slice(0, 120) ?? ""
       steps.push(`Result from ${name}: ${brief}`)
     }
   }
@@ -124,6 +127,7 @@ function determineConfidence(
 function extractAnswer(messages: BaseMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
+    if (!msg) continue
     if (msg._getType() === "ai" && typeof msg.content === "string" && msg.content) {
       return msg.content
     }
@@ -152,8 +156,9 @@ export function extractResponse(
 
       return { answer, citations, reasoning, toolsUsed, agentUsed, confidence }
     } catch (err) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) })
-      span.recordException(err instanceof Error ? err : new Error(String(err)))
+      const traceError = getTelemetryException(err)
+      span.setStatus({ code: SpanStatusCode.ERROR, message: traceError.message })
+      span.recordException(traceError)
       throw err
     } finally {
       span.end()

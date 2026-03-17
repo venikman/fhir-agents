@@ -1,8 +1,14 @@
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
+import type { Callbacks } from "@langchain/core/callbacks/manager"
 import { SystemMessage, HumanMessage } from "@langchain/core/messages"
 import { SpanStatusCode } from "@opentelemetry/api"
-import { tracer } from "../otel.ts"
+import { getTelemetryException, setContentAttribute, tracer } from "../otel.ts"
 import type { AgentType } from "./definitions.ts"
+
+const routerModel = new ChatGoogleGenerativeAI({
+  model: "gemini-3.1-flash-lite-preview",
+  apiKey: process.env.GOOGLE_API_KEY,
+})
 
 const VALID_TYPES: AgentType[] = ["lookup", "search", "analytics", "clinical", "cohort", "export"]
 
@@ -19,23 +25,21 @@ Key distinction: "search" filters a SINGLE resource type (e.g. find patients by 
 
 Respond with ONLY the agent type, nothing else.`
 
-export async function classifyIntent(query: string): Promise<AgentType> {
+export async function classifyIntent(
+  query: string,
+  callbacks?: Callbacks,
+): Promise<AgentType> {
   return tracer.startActiveSpan("router.classify_intent", async (span) => {
     try {
-      span.setAttribute("query.text", query)
+      setContentAttribute(span, "query.text", query)
 
-      const model = new ChatGoogleGenerativeAI({
-        model: "gemini-3.1-flash-lite-preview",
-        apiKey: process.env.GOOGLE_API_KEY,
-      })
-
-      const response = await model.invoke([
+      const response = await routerModel.invoke([
         new SystemMessage(CLASSIFICATION_PROMPT),
         new HumanMessage(query),
-      ])
+      ], { callbacks })
 
       const raw = String(response.content).trim().toLowerCase()
-      span.setAttribute("router.raw_response", raw)
+      setContentAttribute(span, "router.raw_response", raw)
 
       // Extract a valid agent type from the response
       for (const t of VALID_TYPES) {
@@ -63,8 +67,9 @@ export async function classifyIntent(query: string): Promise<AgentType> {
       span.setStatus({ code: SpanStatusCode.OK })
       return "clinical"
     } catch (err) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) })
-      span.recordException(err instanceof Error ? err : new Error(String(err)))
+      const traceError = getTelemetryException(err)
+      span.setStatus({ code: SpanStatusCode.ERROR, message: traceError.message })
+      span.recordException(traceError)
       throw err
     } finally {
       span.end()

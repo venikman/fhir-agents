@@ -1,5 +1,11 @@
 import "./otel.ts"
-import { tracer } from "./otel.ts"
+import {
+  createLangfuseCallbacks,
+  getTelemetryException,
+  getTraceIdentifier,
+  setContentAttribute,
+  tracer,
+} from "./otel.ts"
 import { SpanStatusCode } from "@opentelemetry/api"
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
 import { createReactAgent } from "@langchain/langgraph/prebuilt"
@@ -50,11 +56,17 @@ export async function runQuery(
 ): Promise<AgentResponse> {
   return tracer.startActiveSpan("copilot.query", async (span) => {
     try {
-      span.setAttribute("query.text", query)
-      span.setAttribute("thread_id", threadId)
+      const sanitizedThreadId = getTraceIdentifier(threadId)
+      span.setAttribute("thread_id", sanitizedThreadId)
+      setContentAttribute(span, "query.text", query)
 
       // 1. Route
-      const agentType = await classifyIntent(query)
+      const routerCallbacks = createLangfuseCallbacks({
+        sessionId: threadId,
+        tags: ["router"],
+        traceMetadata: { threadId, workflow: "router.classify_intent" },
+      })
+      const agentType = await classifyIntent(query, routerCallbacks)
       span.setAttribute("agent.type", agentType)
       callbacks?.onMeta?.(agentType, threadId)
 
@@ -64,9 +76,20 @@ export async function runQuery(
       let inputTokens = 0
       let outputTokens = 0
 
+      const agentCallbacks = createLangfuseCallbacks({
+        sessionId: threadId,
+        tags: ["agent", `agent:${agentType}`],
+        traceMetadata: { threadId, agentType, workflow: "copilot.query" },
+      })
+
       const stream = agent.streamEvents(
         { messages: [new HumanMessage(query)] },
-        { configurable: { thread_id: threadId }, version: "v2", recursionLimit: 50 },
+        {
+          configurable: { thread_id: threadId },
+          callbacks: agentCallbacks,
+          version: "v2",
+          recursionLimit: 50,
+        },
       )
 
       for await (const event of stream) {
@@ -100,7 +123,7 @@ export async function runQuery(
         }
       }
 
-      // Token usage (OpenLIT semantic conventions)
+      // Token usage attributes are preserved for Langfuse span analysis.
       span.setAttribute("gen_ai.usage.input_tokens", inputTokens)
       span.setAttribute("gen_ai.usage.output_tokens", outputTokens)
       span.setAttribute("gen_ai.usage.total_tokens", inputTokens + outputTokens)
@@ -113,8 +136,9 @@ export async function runQuery(
       span.setStatus({ code: SpanStatusCode.OK })
       return response
     } catch (err) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) })
-      span.recordException(err instanceof Error ? err : new Error(String(err)))
+      const traceError = getTelemetryException(err)
+      span.setStatus({ code: SpanStatusCode.ERROR, message: traceError.message })
+      span.recordException(traceError)
       throw err
     } finally {
       span.end()

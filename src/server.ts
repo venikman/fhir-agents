@@ -1,5 +1,5 @@
 import "./otel.ts"
-import { tracer } from "./otel.ts"
+import { getTelemetryException, getTraceIdentifier, tracer } from "./otel.ts"
 import { SpanStatusCode } from "@opentelemetry/api"
 import { Elysia, t } from "elysia"
 import { cors } from "@elysiajs/cors"
@@ -21,15 +21,16 @@ const app = new Elysia()
         const threadId = body.threadId ?? `http-${Date.now()}`
         span.setAttribute("http.method", "POST")
         span.setAttribute("http.route", "/api/copilot")
-        span.setAttribute("thread_id", threadId)
+        span.setAttribute("thread_id", getTraceIdentifier(threadId))
 
         try {
           const response = await runQuery(body.query, threadId)
           span.setStatus({ code: SpanStatusCode.OK })
           return response
         } catch (err) {
-          span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) })
-          span.recordException(err instanceof Error ? err : new Error(String(err)))
+          const traceError = getTelemetryException(err)
+          span.setStatus({ code: SpanStatusCode.ERROR, message: traceError.message })
+          span.recordException(traceError)
           throw err
         } finally {
           span.end()
@@ -58,7 +59,7 @@ const app = new Elysia()
       await tracer.startActiveSpan("ws.message", async (span) => {
         span.setAttribute("http.method", "WS")
         span.setAttribute("http.route", "/api/copilot/ws")
-        span.setAttribute("thread_id", threadId)
+        span.setAttribute("thread_id", getTraceIdentifier(threadId))
 
         try {
           const response = await runQuery(data.query, threadId, {
@@ -80,8 +81,9 @@ const app = new Elysia()
             type: "error" as const,
             message: err instanceof Error ? err.message : String(err),
           })
-          span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) })
-          span.recordException(err instanceof Error ? err : new Error(String(err)))
+          const traceError = getTelemetryException(err)
+          span.setStatus({ code: SpanStatusCode.ERROR, message: traceError.message })
+          span.recordException(traceError)
         } finally {
           span.end()
         }

@@ -1,44 +1,140 @@
 services:
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.12-alpine
-    environment:
+  langfuse-web:
+    image: langfuse/langfuse:3
+    ports:
+      - "3001:3000"
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: OPENLIT
-      CLICKHOUSE_DATABASE: openlit
-      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
-    ports:
-      - "8123:8123"
-    volumes:
-      - clickhouse-data:/var/lib/clickhouse
-      - ./assets/clickhouse-config.xml:/etc/clickhouse-server/config.d/custom-config.xml:ro
-      - ./assets/clickhouse-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
-    healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --user=default --password=OPENLIT --query='SELECT 1'"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
-
-  openlit:
-    image: ghcr.io/openlit/openlit:latest
-    ports:
-      - "3001:3000"   # OpenLIT UI
-      - "4318:4318"   # OTLP HTTP receiver
-    environment:
-      INIT_DB_HOST: clickhouse
-      INIT_DB_PORT: 8123
-      INIT_DB_DATABASE: openlit
-      INIT_DB_USERNAME: default
-      INIT_DB_PASSWORD: OPENLIT
-      SQLITE_DATABASE_URL: file:/app/client/data/data.db
+      CLICKHOUSE_PASSWORD: langfuse-clickhouse
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: langfuse-redis
+      NEXTAUTH_SECRET: local-dev-secret
+      NEXTAUTH_URL: http://localhost:3001
+      SALT: local-dev-salt
+      ENCRYPTION_KEY: 732e882ac495c96797f0c5c5f8b3d96ee289fe90a2c292ce7ffca61565e16acc
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: true
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minioadmin
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: minioadmin
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: true
+      LANGFUSE_S3_MEDIA_UPLOAD_ENABLED: true
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minioadmin
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: minioadmin
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: true
+      LANGFUSE_INIT_ORG_ID: org-local
+      LANGFUSE_INIT_ORG_NAME: Local Dev
+      LANGFUSE_INIT_PROJECT_ID: proj-local
+      LANGFUSE_INIT_PROJECT_NAME: Provider Copilot
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local
+      LANGFUSE_INIT_USER_EMAIL: dev@example.com
+      LANGFUSE_INIT_USER_NAME: Developer
+      LANGFUSE_INIT_USER_PASSWORD: password
     depends_on:
+      postgres:
+        condition: service_healthy
       clickhouse:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    environment:
+      <<: *langfuse-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     volumes:
-      - openlit-data:/app/client/data
-      - ./assets/otel-collector-config.yaml:/etc/otel/otel-collector-config.yaml
-      - ./assets/supervisor-dynamic.yaml:/etc/otel/supervisor-dynamic.yaml
+      - langfuse-pg:/var/lib/postgresql/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    environment:
+      TZ: UTC
+      CLICKHOUSE_PASSWORD: langfuse-clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    volumes:
+      - langfuse-ch:/var/lib/clickhouse
+      - langfuse-ch-logs:/var/log/clickhouse-server
+      - ./scripts/clickhouse-config.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass langfuse-redis --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuse-redis", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - langfuse-redis:/data
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - langfuse-minio:/data
+
+  minio-init:
+    image: minio/mc
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set minio http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing minio/langfuse &&
+      mc mb --ignore-existing minio/langfuse-media
+      "
+    depends_on:
+      minio:
+        condition: service_healthy
 
 volumes:
-  clickhouse-data:
-  openlit-data:
+  langfuse-pg:
+  langfuse-ch:
+  langfuse-ch-logs:
+  langfuse-redis:
+  langfuse-minio:

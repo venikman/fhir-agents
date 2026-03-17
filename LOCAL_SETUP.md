@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - [Bun](https://bun.sh) runtime installed
-- Docker (for OpenLIT observability stack)
+- [Docker](https://www.docker.com/) for local Langfuse (optional, for tracing)
 
 ## Quick Start
 
@@ -15,7 +15,12 @@ bun install
 cp .env.example .env
 # Edit .env and set GOOGLE_API_KEY
 
-# 3. Start the server
+# 3. Start local Langfuse (optional — tracing disabled without it)
+docker compose up -d
+# UI at http://localhost:3001 (dev@example.com / password)
+# API keys pk-lf-local / sk-lf-local are auto-seeded (match .env.example)
+
+# 4. Start the server
 bun run src/server.ts
 ```
 
@@ -25,9 +30,15 @@ bun run src/server.ts
 |----------|----------|---------|---------|
 | `GOOGLE_API_KEY` | Yes | — | Gemini API authentication |
 | `GOOGLE_CLOUD_PROJECT` | No | `audio-sharp-interop` | GCP project for quota |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | `http://localhost:4318` | OTLP collector (local OpenLIT or Grafana Cloud) |
-| `OTEL_EXPORTER_OTLP_HEADERS` | No | — | Grafana Cloud auth header (blank for local) |
-| `GH_TOKEN` | No | — | GitHub PAT with `read:packages` (for pulling OpenLIT Docker image from GHCR) |
+| `FHIR_BASE_URL` | No | `https://bulk-atr.nedbailov375426.workers.dev` | FHIR R4 server base URL |
+| `LANGFUSE_BASE_URL` | No | — | Langfuse base URL, e.g. `https://langfuse.example.com` |
+| `LANGFUSE_PUBLIC_KEY` | No | — | Langfuse public API key |
+| `LANGFUSE_SECRET_KEY` | No | — | Langfuse secret API key |
+| `LANGFUSE_TRACING_ENVIRONMENT` | No | `NODE_ENV` or `development` | Trace environment label |
+| `LANGFUSE_RELEASE` | No | — | Release/version tag for traces |
+| `LANGFUSE_CAPTURE_CONTENT` | No | `false` | Opt-in prompt/output capture. Keep `false` for PHI-safe defaults |
+
+Tracing is disabled automatically when `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, or `LANGFUSE_SECRET_KEY` is missing.
 
 ## Running the Server
 
@@ -40,6 +51,7 @@ bun run src/server.ts
 ```
 
 ### Quick test
+
 ```bash
 curl http://localhost:3000/health
 curl -X POST http://localhost:3000/api/copilot \
@@ -49,77 +61,45 @@ curl -X POST http://localhost:3000/api/copilot \
 
 See [docs/COPILOT.md](docs/COPILOT.md) for WebSocket protocol and client examples.
 
-## OpenLIT — Observability Stack
+## Langfuse Observability
 
-OpenLIT provides a local UI with AI dashboards for inspecting OTel traces, metrics, and LLM stats.
+This repo emits traces to Langfuse through the Langfuse OpenTelemetry span processor and LangChain callback handler.
 
-### First-time setup
+- Manual spans cover router, FHIR HTTP, and explainability.
+- LangChain spans cover model calls and tool execution.
+- Trace content is redacted by default, and thread/session identifiers are hashed before export. Set `LANGFUSE_CAPTURE_CONTENT=true` only in safe environments.
 
-The OpenLIT Docker image is on GHCR and requires authentication:
-
-```bash
-echo $GH_TOKEN | docker login ghcr.io -u <your-github-username> --password-stdin
-```
-
-Copy the required OpenLIT config assets from the [OpenLIT repo](https://github.com/openlit/openlit):
+### Local Langfuse (via Docker Compose)
 
 ```bash
-git clone --depth 1 https://github.com/openlit/openlit.git /tmp/openlit
-cp /tmp/openlit/assets/{otel-collector-config.yaml,clickhouse-config.xml,clickhouse-init.sh,supervisor-dynamic.yaml} assets/
+docker compose up -d            # Start Langfuse v3 stack (Postgres, ClickHouse, Redis, MinIO)
+# UI: http://localhost:3001     (dev@example.com / password)
+# API keys pk-lf-local / sk-lf-local are auto-seeded via LANGFUSE_INIT_* env vars
 ```
 
-### Start
+The `.env.example` defaults already point at local Langfuse — just `cp .env.example .env` and set `GOOGLE_API_KEY`.
 
-```bash
-docker compose up -d
-```
+### Remote / Cloud Langfuse
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| ClickHouse | 8123 | Trace/metric storage |
-| OpenLIT | 3001 | AI observability dashboard |
-| OpenLIT | 4318 | OTLP HTTP receiver |
+Replace `LANGFUSE_*` vars in `.env` with your instance URL and keys.
 
-### View traces
+After running a query, open your Langfuse project and verify you see:
 
-Run any copilot query, then open **http://localhost:3001** to see:
-- Aggregated AI dashboards (token usage, cost, latency)
-- Nested trace waterfall (root → router → agent → tools → FHIR HTTP)
-- FHIR HTTP spans with status codes and resource types
-- LLM token usage and latency per call
-- Explainability span attributes (confidence, citations)
+- `http.request` or `ws.message`
+- `copilot.query`
+- `router.classify_intent`
+- LangChain model/tool spans
+- `fhir.http`
+- `explainability.extract`
 
-### Stop / Remove
-
-```bash
-docker compose down
-```
-
-### Clean restart (reset data)
-
-```bash
-docker compose down -v
-docker compose up -d
-```
-
-## Grafana Cloud (Deployment)
-
-Same app code — switch from local OpenLIT to Grafana Cloud by changing env vars:
-
-```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-<zone>.grafana.net/otlp
-OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64(instanceId:apiToken)>
-```
-
-Free tier: 50 GB traces/month, 10k metric series, 14-day retention, 3 users.
+See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) for the deployment topology and rollout notes.
 
 ## Running Tests
 
-API contract tests use `.http` files with [httpYac](https://httpyac.github.io/) assertions. Standard `.http` syntax — also works in VS Code REST Client and JetBrains HTTP Client.
-
-### Copilot API tests (requires `bun run src/server.ts`)
+API contract tests use `.http` files with [httpYac](https://httpyac.github.io/) assertions.
 
 ```bash
-bunx httpyac docs/http/copilot.http --all     # Server API (5 requests)
-bunx httpyac docs/http/router.http --all      # Router classification (6 requests)
+bunx httpyac docs/http/copilot.http --all    # Copilot API contract tests
+bunx httpyac docs/http/router.http --all     # Router classification tests
+bun run docs/http/telemetry-e2e.ts           # Verify traces land in Langfuse
 ```
